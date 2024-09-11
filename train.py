@@ -191,7 +191,7 @@ class Transformer(nn.Module):
     
 
 # =========================================== Train ==================================================
-model = BigramLM()
+model = Transformer()
 model = model.to(device)
 optimiser = torch.optim.AdamW(model.parameters(), lr=lr)
 
