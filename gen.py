@@ -1,15 +1,18 @@
 import torch
-from src.train import Transformer, decode  
+from train import Transformer, decode  
 from datetime import datetime
 import os 
 
 
 def gen(MODEL, text_length=100, terminal=True, writefile=True, timestamp=True):
     device = "cuda" if torch.cuda.is_available() else ("cpu" if torch.backends.mps.is_available() else "cpu")
+    model = Transformer()
 
     # Initialize the model
-    model = Transformer()
-    model.load_state_dict(torch.load(f"../models/{MODEL}.pth", weights_only=True, map_location=device))  # Load model's state dict
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    file_path = os.path.join(current_dir, f"models/{MODEL}.pth")
+
+    model.load_state_dict(torch.load(file_path, weights_only=True, map_location=device))  # Load model's state dict
     model = model.to(device)
     model.eval()  # Set the model to evaluation mode
 
@@ -23,12 +26,13 @@ def gen(MODEL, text_length=100, terminal=True, writefile=True, timestamp=True):
 
     if writefile:
         appendix = timestamp = datetime.now().strftime('%Y%m%d_%H%M%S') if timestamp else ""
-        filename = f"../generated/out_{appendix}.txt"
+        file_path = os.path.join(current_dir, f"generated/out_{appendix}.txt")
+
         os.makedirs("generated", exist_ok=True)  # Create directory if it doesn't exist
-        with open(filename, "w") as f:
+        with open(file_path, "w") as f:
             f.write(gen_text)
-        print(f"File saved at: {filename}")
+        print(f"File saved at: generated/out_{appendix}.txt")
 
 
 if __name__ == "__main__":
-    gen()
+    gen(MODEL="Shakespeare")

@@ -1,27 +1,37 @@
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-
+import os
 
 # ======================================== HyperParams ===============================================
-batch_size     = 32              # number of indep sequences to be processed in parralel
-context_length = 8               # number of previous chars used to predict the following one
+DATASET = "Shakespeare"
+batch_size     = 64              # number of indep sequences to be processed in parralel
+context_length = 256              # number of previous chars used to predict the following one
 max_steps      = 5_000          # max number of steps to complete in training
-eval_freq      = max_steps // 100 # how often to evaluate
-lr             = 1e-3
+# eval_freq      = max_steps // 100 # how often to evaluate
+eval_freq      = 10
+lr             = 3e-4
 device = "cuda" if torch.cuda.is_available() else ("cpu" if torch.backends.mps.is_available() else "cpu")
 print(f"Using {device}")
-eval_iters = 200
-num_embeddings = 32
+eval_iters     = 200
+num_embeddings = 384
+num_heads = 6
+num_layers = 6
+dropout = 0.2
 # --------------------------------------------------------------------------------------------------------
 
 # 1:23:34
-with open("input.txt", "r") as f:
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+file_path = os.path.join(current_dir, f"data/{DATASET}.txt")
+
+with open(file_path, "r") as f:  # Move one level up and into the data directory
     text = f.read()
+
 
 chars = sorted(list(set(text))) # total num of chars
 vocab_size = len(chars)         # num of unique chars
-print(f"Dataset length: {len(text)} /|=|\ Unique chars: {vocab_size}")
+print(f"Dataset length: {len(text)}, Unique chars: {vocab_size}")
 
 charToNum = { char:ind for ind, char in enumerate(chars) } # translate char into number
 numToChar = { ind:char for ind, char in enumerate(chars) } # translate number into char
@@ -35,15 +45,13 @@ n = int(0.9*len(data))
 train_data = data[:n] # 90% tarin
 val_data = data[n:]  # 10% val
     
-
-def get_batch(split): # produce a random batch (data loading)
+def get_batch(split):
     data = train_data if split == "train" else val_data
-    indices = torch.randint(len(data) - context_length, (batch_size,)) # generate batch size random offsets
-    x = torch.stack([data[i:i+context_length] for i in indices])     # inp  - stack them as rows
-    y = torch.stack([data[i+1:i+context_length+1] for i in indices]) # pred - offset by one to allow for prediction
+    indices = torch.randint(len(data) - context_length, (batch_size,))
+    x = data[indices.unsqueeze(1) + torch.arange(context_length)]  # slice the input in one go
+    y = data[indices.unsqueeze(1) + torch.arange(1, context_length + 1)]
     x, y = x.to(device), y.to(device)
-    return x,y
-
+    return x, y
 
 @torch.no_grad()
 def estimate_loss(): # evaluate losses
@@ -85,6 +93,8 @@ class Head(nn.Module):
         self.value = nn.Linear(num_embeddings, head_size, bias=False)
         self.register_buffer("tril", torch.tril(torch.ones(context_length, context_length))) # creating custom parameter for masking
 
+        self.dropout = nn.Dropout(dropout)
+
     def forward(self, x):
         B, T, C = x.shape
 
@@ -95,6 +105,8 @@ class Head(nn.Module):
         wei = q @ k.transpose(-2, -1) * k.shape[-1]**-0.5                      # (B,T,T)
         wei = wei.masked_fill(self.tril[:T, :T] == 0, float("-inf")) # (B,T,T)
         wei = F.softmax(wei, dim=-1) # (B,T,T)
+        wei = self.dropout(wei) # dropout
+        
         out = wei @ v # (B,T,C)
         return out
     
@@ -106,6 +118,7 @@ class FeedForward(nn.Module):
             nn.Linear(num_embeddings, 4 * num_embeddings),
             nn.ReLU(),
             nn.Linear(4 * num_embeddings, num_embeddings), # projection layer back into the residual pathway
+            nn.Dropout(dropout),
         )
 
     def forward(self, x):
@@ -117,10 +130,12 @@ class MultiHeadAttention(nn.Module):
         super().__init__()
         self.heads = nn.ModuleList([Head(head_size) for _ in range((num_heads))]) # replicate individual attention heads num_heads times
         self.projection = nn.Linear(num_embeddings, num_embeddings) # projection layer back into the residual pathway
+        self.dropout = nn.Dropout(dropout)
     
     def forward(self, x):
         out = torch.cat([h(x) for h in self.heads], dim=-1) # concat individual heads
         out = self.projection(out)
+        out = self.dropout(out) # added dropout
         return out
     
 
@@ -139,18 +154,14 @@ class Block(nn.Module):
         x = x + self.ffwd(self.ln2(x)) # also now has layer norm
         return x
 
-class BigramLM(nn.Module):
+class Transformer(nn.Module):
     def __init__(self):
         super().__init__()
-        self.token_embedding_table    = nn.Embedding(vocab_size,     num_embeddings) # just a 2-d lookup table, like chess
-        self.position_embedding_table = nn.Embedding(context_length, num_embeddings)
-        self.blocks = nn.Sequential(
-            Block(num_embeddings, num_heads=4),
-            Block(num_embeddings, num_heads=4),
-            Block(num_embeddings, num_heads=4),
-            nn.LayerNorm(num_embeddings),
-        )
-        self.language_modelling_head  = nn.Linear(num_embeddings, vocab_size)
+        self.token_embedding_table    = nn.Embedding(vocab_size,     num_embeddings) # word embedding
+        self.position_embedding_table = nn.Embedding(context_length, num_embeddings) # posiional encoding
+        self.blocks = nn.Sequential(*[Block(num_embeddings, num_heads=num_heads) for _ in range(num_layers)])
+        self.ln_f = nn.LayerNorm(num_embeddings) # final layer normalisation
+        self.language_model_head  = nn.Linear(num_embeddings, vocab_size)
 
     def forward(self, indices, targets=None):
         B, T = indices.shape
@@ -159,7 +170,8 @@ class BigramLM(nn.Module):
         pos_emb   = self.position_embedding_table(torch.arange(T, device=device)) # positional encoding 
         x = token_emb + pos_emb
         x = self.blocks(x)
-        logits = self.language_modelling_head(x) # (B,T, vocab_size)
+        x = self.ln_f(x) # final layer norm
+        logits = self.language_model_head(x) # (B,T, vocab_size)
 
 
         if targets is None:
@@ -184,26 +196,31 @@ class BigramLM(nn.Module):
     
 
 # =========================================== Train ==================================================
-model = BigramLM()
+
+model = Transformer()
 model = model.to(device)
 optimiser = torch.optim.AdamW(model.parameters(), lr=lr)
 
-for step in range(max_steps):
-    if step % eval_freq == 0 or step == max_steps-1: # just printing stuff
-        losses = estimate_loss()
-        print(f"{step//eval_freq:2d}/{max_steps//eval_freq:2d}: Train loss = {losses['train']:.4f}, Val loss = {losses['val']:.4f}")
+def main():
+    for step in range(max_steps):
+        if step == 0:
+            print("Starting the training process\n")
+        if step % eval_freq == 0 or step == max_steps-1: # just printing stuff
+            losses = estimate_loss()
+            print(f"{step//eval_freq:2d}/{max_steps//eval_freq:2d}: Train loss = {losses['train']:.4f}, Val loss = {losses['val']:.4f}")
 
-    xb, yb = get_batch("train") # sample a batch of data
+        xb, yb = get_batch("train") # sample a batch of data
 
-    # evaluate data
-    logits, loss = model(xb,yb)
-    optimiser.zero_grad(set_to_none=True)
-    loss.backward()
-    optimiser.step()
+        # evaluate data
+        logits, loss = model(xb,yb)
+        optimiser.zero_grad(set_to_none=True)
+        loss.backward()
+        optimiser.step()
 
+    file_path = os.path.join(current_dir, f"models/{DATASET}.pth")
+    torch.save(model.state_dict(), file_path)
+    print(loss.item())
+    # gen(MODEL=DATASET, text_length=500, terminal=True, writefile=True, timestamp=True)
 
-print(loss.item())
-context = torch.zeros((1,1), dtype=torch.long, device=device)
-gen = decode(model.generate(context, max_new_tokens=500)[0].tolist())
-with open("gen.txt", "w") as f:
-    f.write(gen)
+if __name__ == "__main__":
+    main()
