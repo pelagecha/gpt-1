@@ -4,34 +4,20 @@ from torch.nn import functional as F
 
 
 # ======================================== HyperParams ===============================================
-"""
-batch_size     = 64 # 32              # number of indep sequences to be processed in parralel
-context_length = 64 # 256              # number of previous chars used to predict the following one
-max_steps      = 1_000          # max number of steps to complete in training
+
+batch_size     = 64              # number of indep sequences to be processed in parralel
+context_length = 256              # number of previous chars used to predict the following one
+max_steps      = 5_000          # max number of steps to complete in training
 # eval_freq      = max_steps // 100 # how often to evaluate
-eval_freq      = 1
+eval_freq      = 10
 lr             = 3e-4
 device = "cuda" if torch.cuda.is_available() else ("cpu" if torch.backends.mps.is_available() else "cpu")
 print(f"Using {device}")
-eval_iters = 200
-num_embeddings = 64 # 384
+eval_iters     = 200
+num_embeddings = 384
 num_heads = 6
 num_layers = 6
 dropout = 0.2
-"""
-batch_size     = 32               # Reduce the batch size to reduce memory usage
-context_length = 128              # Smaller context length for a smaller input sequence
-max_steps      = 5_000            # Same as before
-eval_freq      = 10              # Evaluate less frequently
-lr             = 3e-4
-device = "cuda" if torch.cuda.is_available() else ("cpu" if torch.backends.mps.is_available() else "cpu")
-print(f"Using {device}")
-eval_iters     = 100              # Fewer iterations for evaluation
-num_embeddings = 128              # Reduce the embedding size
-num_heads      = 4                # Reduce the number of heads to match embedding size (num_embeddings should be divisible by num_heads)
-num_layers     = 4                # Fewer transformer layers
-dropout        = 0.1              # Slightly reduce dropout to prevent overfitting in smaller models
-
 # --------------------------------------------------------------------------------------------------------
 
 # 1:23:34
@@ -61,16 +47,6 @@ def get_batch(split):
     y = data[indices.unsqueeze(1) + torch.arange(1, context_length + 1)]
     x, y = x.to(device), y.to(device)
     return x, y
-
-"""
-def get_batch(split): # produce a random batch (data loading)
-    data = train_data if split == "train" else val_data
-    indices = torch.randint(len(data) - context_length, (batch_size,)) # generate batch size random offsets
-    x = torch.stack([data[i:i+context_length] for i in indices])     # inp  - stack them as rows
-    y = torch.stack([data[i+1:i+context_length+1] for i in indices]) # pred - offset by one to allow for prediction
-    x, y = x.to(device), y.to(device)
-    return x,y
-"""
 
 @torch.no_grad()
 def estimate_loss(): # evaluate losses
@@ -234,6 +210,8 @@ for step in range(max_steps):
     loss.backward()
     optimiser.step()
 
+
+torch.save(model.state_dict(), "model.pth")
 print(loss.item())
 context = torch.zeros((1,1), dtype=torch.long, device=device)
 gen = decode(model.generate(context, max_new_tokens=2000)[0].tolist())
