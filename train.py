@@ -4,15 +4,18 @@ from torch.nn import functional as F
 
 
 # ======================================== HyperParams ===============================================
-batch_size     = 32              # number of indep sequences to be processed in parralel
-context_length = 8               # number of previous chars used to predict the following one
+batch_size     = 64              # number of indep sequences to be processed in parralel
+context_length = 256               # number of previous chars used to predict the following one
 max_steps      = 5_000          # max number of steps to complete in training
 eval_freq      = max_steps // 100 # how often to evaluate
-lr             = 1e-3
+lr             = 3e-4
 device = "cuda" if torch.cuda.is_available() else ("cpu" if torch.backends.mps.is_available() else "cpu")
 print(f"Using {device}")
 eval_iters = 200
-num_embeddings = 32
+num_embeddings = 384
+num_heads = 6
+num_layers = 6
+dropout = 0.2
 # --------------------------------------------------------------------------------------------------------
 
 # 1:23:34
@@ -85,6 +88,8 @@ class Head(nn.Module):
         self.value = nn.Linear(num_embeddings, head_size, bias=False)
         self.register_buffer("tril", torch.tril(torch.ones(context_length, context_length))) # creating custom parameter for masking
 
+        self.dropout = nn.Dropout(dropout)
+
     def forward(self, x):
         B, T, C = x.shape
 
@@ -95,6 +100,8 @@ class Head(nn.Module):
         wei = q @ k.transpose(-2, -1) * k.shape[-1]**-0.5                      # (B,T,T)
         wei = wei.masked_fill(self.tril[:T, :T] == 0, float("-inf")) # (B,T,T)
         wei = F.softmax(wei, dim=-1) # (B,T,T)
+        wei = self.dropout(wei) # dropout
+        
         out = wei @ v # (B,T,C)
         return out
     
@@ -106,6 +113,7 @@ class FeedForward(nn.Module):
             nn.Linear(num_embeddings, 4 * num_embeddings),
             nn.ReLU(),
             nn.Linear(4 * num_embeddings, num_embeddings), # projection layer back into the residual pathway
+            nn.Dropout(dropout),
         )
 
     def forward(self, x):
@@ -117,10 +125,12 @@ class MultiHeadAttention(nn.Module):
         super().__init__()
         self.heads = nn.ModuleList([Head(head_size) for _ in range((num_heads))]) # replicate individual attention heads num_heads times
         self.projection = nn.Linear(num_embeddings, num_embeddings) # projection layer back into the residual pathway
+        self.dropout = nn.Dropout(dropout)
     
     def forward(self, x):
         out = torch.cat([h(x) for h in self.heads], dim=-1) # concat individual heads
         out = self.projection(out)
+        out = self.dropout(out) # added dropout
         return out
     
 
@@ -139,18 +149,14 @@ class Block(nn.Module):
         x = x + self.ffwd(self.ln2(x)) # also now has layer norm
         return x
 
-class BigramLM(nn.Module):
+class Transformer(nn.Module):
     def __init__(self):
         super().__init__()
-        self.token_embedding_table    = nn.Embedding(vocab_size,     num_embeddings) # just a 2-d lookup table, like chess
-        self.position_embedding_table = nn.Embedding(context_length, num_embeddings)
-        self.blocks = nn.Sequential(
-            Block(num_embeddings, num_heads=4),
-            Block(num_embeddings, num_heads=4),
-            Block(num_embeddings, num_heads=4),
-            nn.LayerNorm(num_embeddings),
-        )
-        self.language_modelling_head  = nn.Linear(num_embeddings, vocab_size)
+        self.token_embedding_table    = nn.Embedding(vocab_size,     num_embeddings) # word embedding
+        self.position_embedding_table = nn.Embedding(context_length, num_embeddings) # posiional encoding
+        self.blocks = nn.Sequential(*[Block(num_embeddings, num_heads=num_heads) for _ in range(num_layers)])
+        self.ln_f = nn.LayerNorm(num_embeddings) # final layer normalisation
+        self.language_model_head  = nn.Linear(num_embeddings, vocab_size)
 
     def forward(self, indices, targets=None):
         B, T = indices.shape
@@ -159,7 +165,8 @@ class BigramLM(nn.Module):
         pos_emb   = self.position_embedding_table(torch.arange(T, device=device)) # positional encoding 
         x = token_emb + pos_emb
         x = self.blocks(x)
-        logits = self.language_modelling_head(x) # (B,T, vocab_size)
+        x = self.ln_f(x) # final layer norm
+        logits = self.language_model_head(x) # (B,T, vocab_size)
 
 
         if targets is None:
@@ -204,6 +211,6 @@ for step in range(max_steps):
 
 print(loss.item())
 context = torch.zeros((1,1), dtype=torch.long, device=device)
-gen = decode(model.generate(context, max_new_tokens=500)[0].tolist())
+gen = decode(model.generate(context, max_new_tokens=2000)[0].tolist())
 with open("gen.txt", "w") as f:
     f.write(gen)
