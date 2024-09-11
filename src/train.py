@@ -1,10 +1,10 @@
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-
+from src.gen import gen
 
 # ======================================== HyperParams ===============================================
-
+DATASET = "1984"
 batch_size     = 64              # number of indep sequences to be processed in parralel
 context_length = 256              # number of previous chars used to predict the following one
 max_steps      = 5_000          # max number of steps to complete in training
@@ -21,12 +21,13 @@ dropout = 0.2
 # --------------------------------------------------------------------------------------------------------
 
 # 1:23:34
-with open("input.txt", "r") as f:
+with open(f"../data/{DATASET}.txt", "r") as f:  # Move one level up and into the data directory
     text = f.read()
+
 
 chars = sorted(list(set(text))) # total num of chars
 vocab_size = len(chars)         # num of unique chars
-print(f"Dataset length: {len(text)} /|=|\ Unique chars: {vocab_size}")
+print(f"Dataset length: {len(text)}, Unique chars: {vocab_size}")
 
 charToNum = { char:ind for ind, char in enumerate(chars) } # translate char into number
 numToChar = { ind:char for ind, char in enumerate(chars) } # translate number into char
@@ -191,29 +192,31 @@ class Transformer(nn.Module):
     
 
 # =========================================== Train ==================================================
+
 model = Transformer()
 model = model.to(device)
 optimiser = torch.optim.AdamW(model.parameters(), lr=lr)
 
-for step in range(max_steps):
-    if step == 0:
-        print("Starting the training process\n")
-    if step % eval_freq == 0 or step == max_steps-1: # just printing stuff
-        losses = estimate_loss()
-        print(f"{step//eval_freq:2d}/{max_steps//eval_freq:2d}: Train loss = {losses['train']:.4f}, Val loss = {losses['val']:.4f}")
+def main():
+    for step in range(max_steps):
+        if step == 0:
+            print("Starting the training process\n")
+        if step % eval_freq == 0 or step == max_steps-1: # just printing stuff
+            losses = estimate_loss()
+            print(f"{step//eval_freq:2d}/{max_steps//eval_freq:2d}: Train loss = {losses['train']:.4f}, Val loss = {losses['val']:.4f}")
 
-    xb, yb = get_batch("train") # sample a batch of data
+        xb, yb = get_batch("train") # sample a batch of data
 
-    # evaluate data
-    logits, loss = model(xb,yb)
-    optimiser.zero_grad(set_to_none=True)
-    loss.backward()
-    optimiser.step()
+        # evaluate data
+        logits, loss = model(xb,yb)
+        optimiser.zero_grad(set_to_none=True)
+        loss.backward()
+        optimiser.step()
 
 
-torch.save(model.state_dict(), "model.pth")
-print(loss.item())
-context = torch.zeros((1,1), dtype=torch.long, device=device)
-gen = decode(model.generate(context, max_new_tokens=2000)[0].tolist())
-with open("gen.txt", "w") as f:
-    f.write(gen)
+    torch.save(model.state_dict(), f"../models/{DATASET}.pth")
+    print(loss.item())
+    gen(MODEL=DATASET, text_length=500, terminal=True, writefile=True, timestamp=True)
+
+if __name__ == "__main__":
+    main()

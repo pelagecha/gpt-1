@@ -17,4 +17,4 @@ source /etc/profile.d/conda.sh
 
 ## Execute your program(s) ##
 module load CUDA
-python3.11 train.py
+python3.11 src/train.py
