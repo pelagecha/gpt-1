@@ -4,7 +4,7 @@ from datetime import datetime
 import os 
 
 
-def gen(MODEL, text_length=100, terminal=True, writefile=True, timestamp=True):
+def gen(MODEL, text_length=1000, terminal=True, writefile=True, timestamp=True):
     device = "cuda" if torch.cuda.is_available() else ("cpu" if torch.backends.mps.is_available() else "cpu")
     model = Transformer()
 
@@ -17,6 +17,7 @@ def gen(MODEL, text_length=100, terminal=True, writefile=True, timestamp=True):
     model.eval()  # Set the model to evaluation mode
 
     print("-=-=-=-=-= model starting .. =-=-=-=-=-")
+    print(sum(p.numel() for p in model.parameters())/1e6, "M parameters")
     context = torch.zeros((1, 1), dtype=torch.long, device=device)  # Assuming single batch, single token start
 
     gen_text = decode(model.generate(context, max_new_tokens=text_length)[0].tolist())  # Generate new tokens and decode
@@ -35,4 +36,4 @@ def gen(MODEL, text_length=100, terminal=True, writefile=True, timestamp=True):
 
 
 if __name__ == "__main__":
-    gen(MODEL="Shakespeare")
+    gen(MODEL="1984")
