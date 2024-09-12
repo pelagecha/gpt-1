@@ -4,7 +4,7 @@ from torch.nn import functional as F
 import os
 
 # ======================================== HyperParams ===============================================
-DATASET = "Shakespeare"
+DATASET = "1984"
 batch_size     = 64              # number of indep sequences to be processed in parralel
 context_length = 256              # number of previous chars used to predict the following one
 max_steps      = 5_000          # max number of steps to complete in training

@@ -4,7 +4,7 @@ from datetime import datetime
 import os 
 
 
-def gen(MODEL, text_length=100, terminal=True, writefile=True, timestamp=True):
+def gen(MODEL, text_length=10000, terminal=True, writefile=True, timestamp=True):
     device = "cuda" if torch.cuda.is_available() else ("cpu" if torch.backends.mps.is_available() else "cpu")
     model = Transformer()
 
@@ -35,4 +35,4 @@ def gen(MODEL, text_length=100, terminal=True, writefile=True, timestamp=True):
 
 
 if __name__ == "__main__":
-    gen(MODEL="Shakespeare")
+    gen(MODEL="1984")

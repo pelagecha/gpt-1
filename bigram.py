@@ -8,7 +8,7 @@ import os
 DATASET = "1984"
 batch_size     = 32              # number of indep sequences to be processed in parralel
 context_length = 8               # number of previous chars used to predict the following one
-max_steps      = 5          # max number of steps to complete in training
+max_steps      = 500          # max number of steps to complete in training
 eval_freq      = max(max_steps // 100, 1) # how often to evaluate
 lr             = 1e-3
 device = "cuda" if torch.cuda.is_available() else ("cpu" if torch.backends.mps.is_available() else "cpu")
